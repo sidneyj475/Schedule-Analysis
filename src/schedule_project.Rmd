@@ -1,0 +1,952 @@
+---
+title: 'Data Science Project'
+output: html_document
+author: "Sidney Johnson"
+date: "`r format(Sys.Date(), '%m/%d/%y')`"
+---
+
+```{r set options, include=FALSE}
+# DO NOT CHANGE THE LINE BELOW 
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {css styling, echo=FALSE}
+
+<style>
+.tocify {
+max-width: 175px !important;
+}
+</style>
+
+<style>
+.main-container {
+width: 100%;
+max-width: 940px;
+margin-left: 250px;
+margin-right: auto;
+}
+</style>
+
+<style>
+.red-header {
+  color: red;
+}
+</style>
+
+```
+
+**Note:**    
+
+**Throughout this document, any `season` column represents the year each season started. For example, the 2015-16 season will be in the dataset as 2015.**
+**OKC and DEN 2024-25 schedules intentionally include only 80 games, as the league holds 2 games out for each team in the middle of December due to unknown NBA Cup matchups. Specific games are not assigned to fill those two slots.**
+
+# Setup and Data    
+
+```{r load data, message = F, warning = F}
+library(tidyverse)
+library(ggplot2)
+# Note, you will likely have to change these paths. If your data is in the same folder as this project, 
+# the paths will likely be fixed for you by deleting ../../Data/schedule_project/ from each string.
+schedule <- read_csv("Data/schedule_project/schedule.csv")
+draft_schedule <- read_csv("Data/schedule_project/schedule_24_partial.csv")
+locations <- read_csv("Data/schedule_project/locations.csv")
+game_data <- read_csv("Data/schedule_project/team_game_data.csv")
+```
+
+## Part 1 -- Schedule Analysis               
+
+```{r}
+# Filter for OKC games only
+okc_schedule <- draft_schedule %>%
+  filter(team == "OKC") %>%
+  mutate(gamedate = ymd(gamedate)) %>% # Convert to Date object 
+  arrange(gamedate) %>% # Arrange starting from October for mental clarity
+  mutate(game_number = row_number()) # Sequential counter for games
+
+head(okc_schedule)
+```
+
+```{r}
+# Check if each game plus the 3 previous games spans 6 nights or less
+okc_with_stretches <- okc_schedule %>%
+  # Create lag column for date from 3 games previously
+  mutate(
+    prev_game_3 = lag(gamedate, 3)
+  ) %>%
+  filter(game_number >= 4) %>% # Start from game 4 (need 3 games previous for calculations)
+  # Check if current game is 4th in 6 nights
+  mutate(
+    date_span = as.numeric(gamedate - prev_game_3), # Calculate span from 4th previous game to the current game
+    is_4in6_stretch = date_span <= 5 # Night 6 - Night 1 = 5 Days (accounts for the fact that subtraction gives the span of dates)
+  ) %>%
+  filter(is_4in6_stretch)
+
+head(okc_with_stretches)
+cat(nrow(okc_with_stretches), '4-in-6 stretches') # There are 26 observations, showing that there were 26 stretches
+```
+
+There are 26 4-in-6 stretches in OKC's draft schedule.
+  
+  
+```{r}
+# Calculate the average number of 4-in-6 stretches for a team in a season
+calc_4in6_stretches <- function(team_schedule) {
+  team_schedule %>%
+    arrange(gamedate) %>%
+    mutate(game_number = row_number()) %>%
+    # Create lag column for date from 3 games previously
+    mutate(
+      prev_game_3 = lag(gamedate, 3)
+    ) %>%
+    filter(game_number >= 4) %>%
+    mutate(
+      date_span = as.numeric(gamedate - prev_game_3),
+      is_4in6 = date_span <= 5
+    ) %>%
+    # Count the stretches
+    summarise(
+      total_games = max(game_number), 
+      stretches_4in6 = sum(is_4in6, na.rm = TRUE)
+    )
+}
+```
+
+```{r}
+# Apply stretch counter to all teams and season combinations
+team_season <- schedule %>%
+  mutate(gamedate = ymd(gamedate)) %>% # Convert to Date object
+  group_by(team, season) %>% # Group by team and season
+  group_modify(~ calc_4in6_stretches(.x)) %>% # Apply function to each group
+  ungroup() # Remove team and season grouping
+
+head(team_season)
+```
+
+```{r}
+# Adjust to 82 games and calculate overall average by season
+per_82 <- team_season %>%
+  # Adjust to per 82
+  mutate(
+    stretches_82 = (stretches_4in6 / total_games) * 82 # Formula is (# of stretches found unadjusted / total games played) * 82
+  ) %>%
+  arrange(desc(stretches_82)) # Sort in descending order
+
+head(per_82)
+```
+
+```{r}
+# Calculate final average across all teams and seasons
+overall_average <- per_82 %>%
+  summarise(
+    total_team_seasons = n(), # Count all rows
+    mean_stretches = mean(stretches_82, na.rm = TRUE)
+  )
+
+final_average <- round(overall_average$mean_stretches, 1)
+
+cat(final_average, '4-in-6 stretches')
+```
+
+There 25.1 4-in-6 stretches on average per season for each NBA team (adjusted to per-82 games).  
+
+
+```{r}
+# Calculate the average number of 4-in-6 stretches by team over 10 seasons
+team_averages <- per_82 %>%
+  group_by(team) %>%
+  summarise(
+    seasons_played = n(), # Count seasons per team
+    total_games_all_seasons = sum(total_games), # Total game count across all seasons
+    total_stretches = sum(stretches_4in6), # Total 4-in-6 count across all seasons
+    avg_stretches = mean(stretches_82, na.rm = TRUE)
+  ) %>%
+  arrange(desc(avg_stretches)) # Rank teams from most to fewest stretches for visual clarity
+
+head(team_averages)
+```
+
+```{r}
+# Find teams with most and fewest stretches
+most_stretches <- team_averages %>%
+  slice(1) %>% # First row (highest average)
+  select(team, avg_stretches)
+
+least_stretches <- team_averages %>%
+  slice(n()) %>% # Last row (lowest average)
+  select(team, avg_stretches)
+
+cat(most_stretches$team, round(most_stretches$avg_stretches, 1), "\n") 
+cat(least_stretches$team, round(least_stretches$avg_stretches, 1))
+```
+
+The Charlotte Hornets had the highest average number of 4-in-6 stretches between 2014-15 and 2023-24 at 28.1     
+The New York Knicks had the fewest average number of 4-in-6 stretches between 2014-15 and 2023-24 at 22.2        
+
+
+```{r}
+# Calculate games where BKN is defensive team
+bkn_defensive_2023 <- game_data %>%
+  filter(season == 2023, def_team == 'BKN') %>% # Get all games where BKN was defending
+  mutate(
+    opp_efg_pct = (fgmade + 0.5 * fg3made) / fgattempted * 100 # Formula for eFG is (FG + 0.5 * 3FG) / FGA * 100
+  ) %>%
+  
+  filter(!is.na(opp_efg_pct)) %>% # Remove games with missing shooting data
+  select(gamedate, off_team, fgmade, fg3made, fgattempted, opp_efg_pct) # Keep relevant columns only
+
+# Calculate overall defensive eFG% for BKN
+overall_defensive <- bkn_defensive_2023 %>%
+  summarise(
+    total_games = n(),
+    total_fg_made = sum(fgmade), # Total opponent FG made against BKN
+    total_3fg_made = sum(fg3made), # Total opponent 3FG made against BKN  
+    total_fg_att = sum(fgattempted), # Total opponent FG attempted against BKN
+    defensive_efg_pct = (total_fg_made + 0.5 * total_3fg_made) / total_fg_att * 100
+  )
+
+cat(round(overall_defensive$defensive_efg_pct, 1), '%')
+```
+```{r}
+# Identify when teams are playing on second night of a back-to-back
+back_to_back <- schedule %>%
+  filter(season == 2023) %>%
+  mutate(gamedate = ymd(gamedate)) %>%
+  arrange(team, gamedate) %>% # Sort chronologically by team
+  group_by(team) %>%
+  mutate(
+    prev_game_date = lag(gamedate), # Previous game date for each team
+    days_since_prev = as.numeric(gamedate - prev_game_date), # Days between games
+    is_2nd = days_since_prev == 1 # TRUE if playing second game of back-to-back
+  ) %>%
+  ungroup() %>%
+  filter(is_2nd == TRUE) %>% # Keep only second games of back-to-backs
+  select(team, gamedate, is_2nd)
+
+head(back_to_back)
+```
+```{r}
+# Join back-to-back data to BKN's defensive games
+bkn_vs_b2b <- bkn_defensive_2023 %>%
+  mutate(gamedate = ymd(gamedate)) %>%
+  # Filter out games where BKN is on a b2b
+  left_join(
+    back_to_back,
+    by = c('off_team' = 'team', 'gamedate' = 'gamedate')
+  ) %>%
+  # Fill NA values with FALSE
+  mutate(is_2nd = replace_na(is_2nd, FALSE))
+
+# Calculate defensive eFG
+b2b_defensive <- bkn_vs_b2b %>%
+  filter(is_2nd ==  TRUE) %>%
+  summarise(
+    b2b_games = n(), # Number of games vs back-to-back opponents
+    total_fg_made = sum(fgmade), # Opponent FG made in B2B games
+    total_3fg_made = sum(fg3made), # Opponent 3FG made in B2B games
+    total_fg_att = sum(fgattempted), # Opponent FGA in B2B games  
+    defensive_efg_pct_b2b = (total_fg_made + 0.5 * total_3fg_made) / total_fg_att * 100
+  )
+
+cat(round(b2b_defensive$defensive_efg_pct_b2b, 1), '%')
+```
+
+BKN's defensive eFG% in the 2023-24 season was 54.3%   
+BKN's defensive eFG% that season in situations where their opponent was on the second night of back-to-back was 53.5%    
+
+
+## Part 2 -- Trends and Visualizations                   
+
+```{r}
+# Prepare date for analysis
+schedule_analysis <- schedule %>% 
+  mutate(gamedate = ymd(gamedate)) %>% 
+  arrange(team, gamedate) # Sort chronologically by team for lag calculations
+```
+
+```{r}
+# Trend 1: Back-to-back frequency over the seasons
+b2b_trends <- schedule_analysis %>% 
+  group_by(team, season) %>% 
+  arrange(gamedate) %>%
+  mutate(
+    prev_game_date = lag(gamedate), # Previous game date for each team
+    days_rest = as.numeric(gamedate - prev_game_date), # Days between consecutive games
+    is_b2b = days_rest == 1 # TRUE if no rest day (back-to-back games)
+  ) %>% 
+  # Filter first game of the season (no previous games)
+  filter(!is.na(days_rest)) %>% 
+  # Calculate by season
+  group_by(season) %>% 
+  summarise(
+    total_games = n(), # Total games across all teams in season
+    b2b_games = sum(is_b2b, na.rm = TRUE), #  Count of back-to-back games
+    b2b_percentage = (b2b_games / total_games) * 100,  # Percentage of games that are b2b
+    avg_rest_days = mean(days_rest, na.rm = TRUE), # Average rest between games
+  )
+
+print(b2b_trends)
+```
+
+```{r}
+# Trend 2: 4-in-6 stretches over the seasons
+stretches_by_season <-  schedule_analysis %>% 
+  group_by(team, season) %>% 
+  arrange(gamedate) %>% 
+  mutate(game_number = row_number()) %>% 
+  mutate(
+    prev_game_3 = lag(gamedate, 3)
+  ) %>% 
+  filter(game_number >= 4) %>% 
+  mutate(
+    date_span = as.numeric(gamedate - prev_game_3),
+    is_4in6 = date_span <= 5
+  ) %>%
+  
+  # Aggregate to season level across all teams
+  group_by(season) %>% 
+  summarise(
+    total_possible = n(), # Total games that could be 4th in a stretch
+    actual_stretches = sum(is_4in6, na.rm = TRUE), # Count of actual 4-in-6 occurrences
+    stretch_rate = (actual_stretches / total_possible) * 100, # Percentage of eligible games in stretches
+  )
+
+print(stretches_by_season)
+```
+
+```{r}
+# Plot for Back-to-back trend
+b2b_plot <- ggplot(b2b_trends, aes(x = season, y = b2b_percentage)) +
+  geom_line(color = 'red', size = 1.2) +
+  geom_point(color = 'black', size = 2) +
+  geom_smooth(method = 'lm', se = FALSE, color = 'darkorange', linetype = 'dashed') +
+  labs(
+    title = 'Back-to-Back Games Have Declined Over Time',
+    subtitle = 'Percentage of games played on consecutive nights, 2014-2023',
+    x = 'Season',
+    y = 'Back-to-Back Games (%)',
+    caption = 'Data: NBA Schedule 2014-2023'
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = 'bold'),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 11)
+  ) +
+  scale_x_continuous(breaks = seq(2014, 2023, 2))
+
+print(b2b_plot)
+```
+
+Trend 1:
+The percentage of games played on consecutive nights dropped from 23.9% in 2014 to 17.4% in 2023, representing a 6.5 percentage point reduction. I believe this decline in back-to-back scheduling reflects the league's growing awareness of injury risk and performance degradation associated with insufficient rest.
+
+```{r}
+# 4-in-6 trend plot
+stretch_plot <- ggplot(stretches_by_season, aes(x = season, y = stretch_rate)) +
+  geom_line(color = 'red', size = 1.2) +
+  geom_point(color = 'black', size  = 2) +
+  geom_smooth(method = 'lm', se = FALSE, color = 'darkorange', linetype = 'dashed') +
+  labs(
+    title = 'Scheduling Has Reduced Compressed Game Stretches',
+    subtitle = 'Percentage of games where teams play 4 games in 6 nights, 2014-2023',
+    x = 'Season',
+    y = '4-in-6 Stretch Rate (%)',
+    caption = 'Data: NBA Schedule 2014-2023'
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = 'bold'),
+    plot.subtitle = element_text(size =  12),
+    axis.title = element_text(size = 11)
+  ) +
+  scale_x_continuous(breaks = seq(2014, 2023, 2))
+
+print(stretch_plot)
+```
+
+Trend 2:
+The rate of 4-in-6 game stretches decreased from 37.5% in 2014 to 29.7% in 2023, indicating that the league is getting better at avoiding the most grueling schedule patterns that previously led to player fatigue and potential injuries. This downward trend in compact scheduling is also in-line with Trend 1.
+
+
+```{r}
+# Function to calculate distance between two cities using Haversine formula
+haversine_distance <- function(lat1, lon1, lat2, lon2) {
+  # Convert degrees to radians
+  lat1 <- lat1 * pi / 180
+  lon1 <- lon1 * pi / 180
+  lat2 <- lat2 * pi / 180
+  lon2 <- lon2 * pi / 180
+  
+  # Haversine formula
+  dlat <- lat2 - lat1
+  dlon <- lon2 - lon1
+  a <- sin(dlat/2)^2 + cos(lat1) * cos(lat2) * sin(dlon/2)^2
+  c <- 2 * asin(sqrt(a))
+  
+  # Earth's radius in miles
+  R <- 3959
+  distance <- R * c
+  
+  return(distance)
+}
+
+# Test the function with a known distance
+test_distance <- haversine_distance(40.7589, -73.9851, 34.0430, -118.2673)  # NYC to LA
+cat("Test distance NYC to LA:", round(test_distance, 0), "miles\n")
+cat("Expected: ~2,450 miles\n")
+```
+```{r}
+# Function to prepare team schedule data with travel distances
+prepare_team_data <- function(team_name) {
+  
+  # Get team schedule
+  team_schedule <- draft_schedule %>%
+    filter(team == team_name) %>%
+    mutate(gamedate = ymd(gamedate)) %>%
+    arrange(gamedate) %>%
+    mutate(game_number = row_number())
+  
+  # Add location data
+  team_with_locations <- team_schedule %>%
+    # Add opponent locations
+    left_join(locations, by = c("opponent" = "team")) %>%
+    rename(opp_lat = latitude, opp_lon = longitude) %>% # Rename for visual and mental clarity
+    # Add team's home location
+    left_join(locations, by = c("team" = "team")) %>%
+    rename(team_lat = latitude, team_lon = longitude) %>% # Rename for visual and mental clarity
+    # Calculate game location (where the game is played)
+    mutate(
+      game_lat = if_else(home == 1, team_lat, opp_lat),
+      game_lon = if_else(home == 1, team_lon, opp_lon)
+    )
+  
+  return(team_with_locations)
+}
+
+# Test with OKC
+okc_data <- prepare_team_data("OKC")
+
+head(okc_data)
+```
+```{r}
+# Add travel distance calculations to the team data
+add_travel_distances <- function(team_data) {
+  
+  team_data %>%
+    mutate(
+      # Get previous game location
+      prev_game_lat = lag(game_lat),
+      prev_game_lon = lag(game_lon),
+      
+      # Calculate travel distance from previous game
+      travel_distance = case_when(
+        is.na(prev_game_lat) & home == 1 ~ 0,  # First game at home = no travel
+        is.na(prev_game_lat) & home == 0 ~ haversine_distance(team_lat, team_lon, game_lat, game_lon),  # First game away = travel from home
+        TRUE ~ haversine_distance(prev_game_lat, prev_game_lon, game_lat, game_lon)
+      )
+    ) %>%
+    # Round travel distances for cleaner display
+    mutate(travel_distance = round(travel_distance, 0))
+}
+
+# Apply travel calculations to OKC
+okc_with_travel <- add_travel_distances(okc_data)
+head(okc_with_travel)
+```
+```{r}
+# Function to identify back-to-back periods for rectangle shading
+identify_b2b_periods <- function(team_data) {
+  
+  team_data %>%
+    arrange(gamedate) %>%
+    mutate(
+      prev_game_date = lag(gamedate),
+      days_since_prev = as.numeric(gamedate - prev_game_date),
+      is_back_to_back = days_since_prev == 1
+    ) %>%
+    # Keep only back-to-back games (2nd night)
+    filter(is_back_to_back == TRUE) %>%
+    # Create rectangle data for shading
+    mutate(
+      rect_start = prev_game_date,  # Start of b2 period (1st game date)
+      rect_end = gamedate # End of b2b period (2nd game date)
+    ) %>%
+    select(rect_start, rect_end) %>%
+    # Add rectangle styling
+    mutate(
+      period_type = "Back-to-Back",
+      fill_color = "orange",
+      alpha_level = 0.3
+    )
+}
+
+# Test with OKC data
+okc_b2b_periods <- identify_b2b_periods(okc_with_travel)
+head(okc_b2b_periods)
+```
+
+```{r}
+# Function to identify 4-in-6 periods for rectangle shading  
+identify_4in6_periods <- function(team_data) {
+  
+  # Calculate 4-in-6 stretches (reusing logic from earlier questions)
+  team_with_stretches <- team_data %>%
+    arrange(gamedate) %>%
+    mutate(game_number = row_number()) %>%
+    mutate(
+      prev_game_3 = lag(gamedate, 3)
+    ) %>%
+    filter(game_number >= 4) %>%
+    mutate(
+      date_span = as.numeric(gamedate - prev_game_3),
+      is_4in6_end = date_span <= 5
+    ) %>%
+    # Keep only games that end 4-in-6 stretches
+    filter(is_4in6_end == TRUE)
+  
+  # Create rectangle data for each 4-in-6 stretch
+  if (nrow(team_with_stretches) > 0) {
+    team_with_stretches %>%
+      mutate(
+        rect_start = prev_game_3,  # Start of 4-in-6 period (1st game date)
+        rect_end = gamedate        # End of 4-in-6 period (4th game date)  
+      ) %>%
+      select(rect_start, rect_end) %>%
+      # Add rectangle styling
+      mutate(
+        period_type = "4-in-6 Stretch",
+        fill_color = "red", 
+        alpha_level = 0.3
+      )
+  } else {
+    # Return empty data frame with correct structure if no stretches found
+    data.frame(
+      rect_start = as.Date(character(0)),
+      rect_end = as.Date(character(0)), 
+      period_type = character(0),
+      fill_color = character(0),
+      alpha_level = numeric(0)
+    )
+  }
+}
+
+# Test with OKC data
+okc_4in6_periods <- identify_4in6_periods(okc_with_travel)
+head(okc_4in6_periods)
+```
+
+```{r}
+# Static plot function with background shading
+create_schedule_plot_with_shading <- function(team_data, team_name) {
+  
+  # Get the period data
+  b2b_periods <- identify_b2b_periods(team_data)
+  four_in_six_periods <- identify_4in6_periods(team_data)
+  
+  # Get date range and y-axis max for rectangles
+  date_range <- range(team_data$gamedate)
+  y_max <- max(team_data$travel_distance) * 1.05  # Add 5% padding
+  
+  # Create month break dates
+  month_breaks <- seq(
+    from = floor_date(date_range[1], "month"),
+    to = ceiling_date(date_range[2], "month"),
+    by = "month"
+  )
+  
+  # Build the plot
+  p <- ggplot(team_data, aes(x = gamedate, y = travel_distance))
+  
+  # b2b background rectangles (yellow)
+  if (nrow(b2b_periods) > 0) {
+    p <- p + 
+      geom_rect(
+        data = b2b_periods,
+        aes(xmin = rect_start, xmax = rect_end, ymin = 0, ymax = y_max),
+        fill = "orange",
+        alpha = 0.5,
+        inherit.aes = FALSE
+      )
+  }
+  
+  # 4-in-6 background rectangles (red)
+  if (nrow(four_in_six_periods) > 0) {
+    p <- p +
+      geom_rect(
+        data = four_in_six_periods,
+        aes(xmin = rect_start, xmax = rect_end, ymin = 0, ymax = y_max),
+        fill = "red",
+        alpha = 0.2,
+        inherit.aes = FALSE
+      )
+  }
+  
+  # Month divider lines
+  p <- p +
+    geom_vline(
+      xintercept = month_breaks,
+      color = "gray80",
+      size = 0.5,
+      alpha = 0.7
+    )
+  
+  # Lollipop plot stems
+  p <- p +
+    geom_segment(
+      aes(xend = gamedate, yend = 0),
+      color = "gray50",
+      size = 0.5,
+      alpha = 0.6
+    )
+  
+  # Lollipop plot heads
+  p <- p +
+    geom_point(
+      aes(color = factor(home, levels = c(0, 1), labels = c("Away", "Home"))),
+      size = 3.5,
+      alpha = 0.7
+    )
+  
+  # Final styling
+  p <- p +
+    scale_color_manual(values = c("Away" = "red", "Home" = "blue")) +
+    scale_x_date(
+      date_breaks = "1 month",
+      date_labels = "%b"
+    ) +
+    labs(
+      title = paste0(team_name, " 2024-25 Schedule Analysis"),
+      subtitle = "Orange = Back-to-backs | Red = 4-in-6 stretches",
+      x = "Month",
+      y = "Travel Distance from Previous Game (Miles)",
+      color = "Game Location"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom"
+    )
+}
+
+# Test static plot
+okc_static_final <- create_schedule_plot_with_shading(okc_with_travel, "OKC")
+print(okc_static_final)
+```
+
+```{r}
+# Interactive plot function with hover text mapping
+create_interactive_schedule_plot_fixed <- function(team_data, team_name) {
+  
+  # Prepare data with enhanced hover text
+  team_data_with_hover <- team_data %>%
+    mutate(
+      # Calculate rest days for hover info
+      prev_game_date = lag(gamedate),
+      days_rest = case_when(
+        is.na(prev_game_date) ~ NA_real_,
+        TRUE ~ as.numeric(gamedate - prev_game_date) - 1
+      ),
+      
+      # Create hover text
+      hover_text = paste0(
+        "<b>Game ", game_number, " of 80</b><br>",
+        "<b>", format(gamedate, "%B %d, %Y"), "</b><br>",
+        "Opponent: ", opponent, "<br>",
+        "Location: ", if_else(home == 1, "Home", paste0("@ ", opponent)), "<br>",
+        "Travel: ", travel_distance, " miles<br>",
+        "Rest days: ", if_else(is.na(days_rest), "Season opener", paste0(days_rest, " days"))
+      )
+    )
+  
+  # Get the period data
+  b2b_periods <- identify_b2b_periods(team_data)
+  four_in_six_periods <- identify_4in6_periods(team_data)
+  
+  # Get date range and y-axis max for rectangles
+  date_range <- range(team_data_with_hover$gamedate)
+  y_max <- max(team_data_with_hover$travel_distance) * 1.05
+  
+  # Create month break dates
+  month_breaks <- seq(
+    from = floor_date(date_range[1], "month"),
+    to = ceiling_date(date_range[2], "month"),
+    by = "month"
+  )
+  
+  # Build plot with text aesthetic for hover
+  p <- ggplot(team_data_with_hover, aes(x = gamedate, y = travel_distance))
+  
+  # B2B background rectangles (yellow)
+  if (nrow(b2b_periods) > 0) {
+    p <- p + 
+      geom_rect(
+        data = b2b_periods,
+        aes(xmin = rect_start, xmax = rect_end, ymin = 0, ymax = y_max),
+        fill = "orange",
+        alpha = 0.8,
+        inherit.aes = FALSE
+      )
+  }
+  
+  # 4-in-6 background rectangles (red)
+  if (nrow(four_in_six_periods) > 0) {
+    p <- p +
+      geom_rect(
+        data = four_in_six_periods,
+        aes(xmin = rect_start, xmax = rect_end, ymin = 0, ymax = y_max),
+        fill = "red",
+        alpha = 0.2,
+        inherit.aes = FALSE
+      )
+  }
+  
+  # Month divider lines
+  p <- p +
+    geom_vline(
+      xintercept = month_breaks,
+      color = "gray80",
+      size = 0.5,
+      alpha = 0.7
+    )
+  
+  # Lollipop plot stems
+  p <- p +
+    geom_segment(
+      aes(xend = gamedate, yend = 0),
+      color = "gray50",
+      size = 0.5,
+      alpha = 0.6
+    )
+  
+  # Lollipop plot points with hover text
+  p <- p +
+    geom_point(
+      aes(color = factor(home, levels = c(0, 1), labels = c("Away", "Home")),
+          text = hover_text),  # Creates hover
+      size = 3,
+      alpha = 0.7
+    )
+  
+  # Final styling
+  p <- p +
+    scale_color_manual(values = c("Away" = "red", "Home" = "blue")) +
+    scale_x_date(
+      date_breaks = "1 month",
+      date_labels = "%b"
+    ) +
+    labs(
+      title = paste0(team_name, " 2024-25 Schedule Analysis"),
+      subtitle = "Orange = Back-to-backs | Red = 4-in-6 stretches | Hover over points for details",
+      x = "Month",
+      y = "Travel Distance from Previous Game (Miles)",
+      color = "Game Location"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 11),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom"
+    )
+  
+  # Convert to interactive plotly
+  interactive_plot <- plotly::ggplotly(p, tooltip = "text") %>%
+    # Disable hover on rectangle traces
+    plotly::style(hoverinfo = "skip", traces = c(1, 2)) %>%
+    plotly::layout(
+      title = list(
+        text = paste0("<b>", team_name, " 2024-25 Interactive Schedule Analysis</b><br>",
+                     "<sub>Orange = Back-to-backs | Red = 4-in-6 stretches | Hover over points for details</sub>")
+      ),
+      hovermode = "closest"
+    )
+}
+```
+
+```{r}
+# Apply the visualization tool to both teams
+
+# Create DEN data (we already have OKC data)
+den_data <- prepare_team_data("DEN")
+den_with_travel <- add_travel_distances(den_data)
+
+# Create interactive plots for both teams
+okc_interactive_final <- create_interactive_schedule_plot_fixed(okc_with_travel, "OKC")
+okc_interactive_final
+
+den_interactive_final <- create_interactive_schedule_plot_fixed(den_with_travel, "DEN")
+den_interactive_final
+
+```
+
+
+## Part 3 -- Modeling     
+
+```{r}
+# Load and prepare data (2019-2023)
+modeling_data <- schedule %>%
+  filter(season >= 2019, season <= 2023) %>%
+  mutate(gamedate = ymd(gamedate)) %>%
+  # Add location information for travel calculations
+  left_join(locations, by = c("team" = "team")) %>%
+  rename(team_lat = latitude, team_lon = longitude) %>% # Rename for mental and visual clarity
+  left_join(locations, by = c("opponent" = "team")) %>%
+  rename(opp_lat = latitude, opp_lon = longitude) %>% # Rename for mental and visual clarity
+  # Calculate game location
+  mutate(
+    game_lat = if_else(home == 1, team_lat, opp_lat),
+    game_lon = if_else(home == 1, team_lon, opp_lon)
+  ) %>%
+  arrange(team, season, gamedate)
+
+cat("Total games:", nrow(modeling_data), "\n")
+cat("Teams:", length(unique(modeling_data$team)), "\n")
+cat("Seasons:", length(unique(modeling_data$season)), "\n")
+```
+```{r}
+# Calculate schedule-related factors
+calculate_schedule_factors <- function(team_data) {
+  team_data %>%
+    arrange(gamedate) %>%
+    mutate(
+      game_number = row_number(),
+      
+      # Travel factors
+      prev_game_lat = lag(game_lat),
+      prev_game_lon = lag(game_lon),
+      travel_distance = case_when(
+        is.na(prev_game_lat) ~ 0,
+        TRUE ~ round(haversine_distance(prev_game_lat, prev_game_lon, game_lat, game_lon), 0) # Round for cleaner data
+      ),
+      
+      # Rest factors
+      prev_game_date = lag(gamedate),
+      rest_days = case_when(
+        is.na(prev_game_date) ~ NA_real_,
+        TRUE ~ as.numeric(gamedate - prev_game_date) - 1
+      ),
+      is_back_to_back = rest_days == 0,
+      is_well_rested = rest_days >= 2,
+      
+      # Dense scheduling factors
+      prev_game_3 = lag(gamedate, 3),
+      is_4in6_end = case_when(
+        game_number >= 4 ~ as.numeric(gamedate - prev_game_3) <= 5,
+        TRUE ~ FALSE # Cannot end a stretch without 3 prior games
+      )
+    )
+}
+
+# Apply to all teams and seasons
+schedule_factors <- modeling_data %>%
+  group_by(team, season) %>%
+  group_modify(~ calculate_schedule_factors(.x)) %>%
+  ungroup()
+
+head(schedule_factors)
+```
+```{r}
+# Create schedule difficulty metrics by team/season
+team_schedule_difficulty <- schedule_factors %>%
+  group_by(team, season) %>%
+  summarise(
+    games = n(),
+    
+    # Travel burden
+    total_travel = sum(travel_distance, na.rm = TRUE),
+    avg_travel_per_game = mean(travel_distance, na.rm = TRUE),
+    
+    # Rest patterns
+    avg_rest = mean(rest_days, na.rm = TRUE),
+    back_to_back_games = sum(is_back_to_back, na.rm = TRUE),
+    well_rested_games = sum(is_well_rested, na.rm = TRUE),
+    
+    # Dense periods
+    four_in_six_endings = sum(is_4in6_end, na.rm = TRUE),
+    
+    # Home/away
+    home_games = sum(home),
+    
+    # Actual performance
+    actual_wins = sum(win),
+    win_pct = actual_wins / games,
+    .groups = "drop"
+  )
+
+# Calculate each metric relative to league average for that season
+schedule_relative <- team_schedule_difficulty %>%
+  group_by(season) %>%
+  mutate(
+    travel_vs_avg = avg_travel_per_game - mean(avg_travel_per_game),
+    rest_vs_avg = avg_rest - mean(avg_rest),
+    b2b_vs_avg = back_to_back_games - mean(back_to_back_games),
+    four_in_six_vs_avg = four_in_six_endings - mean(four_in_six_endings)
+  ) %>%
+  ungroup()
+
+head(schedule_relative)
+```
+```{r}
+# Create composite schedule difficulty index
+schedule_with_index <- schedule_relative %>%
+  mutate(
+    # Create weighted schedule difficulty index (negative = harder schedule)
+    # Weights are equal for robustness as I found that skewing the weights in any direction-
+    # did not change the outcomes I received for the most helped or hurt
+    schedule_difficulty_index = 
+      -travel_vs_avg * 0.25 +        # More travel = harder (negative weight)
+      rest_vs_avg * 0.25 -           # More rest = easier (positive weight)  
+      b2b_vs_avg * 0.25 -           # More b2bs = harder (negative weight)
+      four_in_six_vs_avg * 0.25,    # More 4-in-6 = harder (negative weight)
+    
+    # Normalize to make interpretation easier
+    schedule_difficulty_scaled = scale(schedule_difficulty_index)[,1]
+  )
+
+# Get expected wins based on historical team strength (simple approach)
+# Use team's win percentage from previous seasons as baseline expectation
+expected_wins <- schedule_with_index %>%
+  arrange(team, season) %>%
+  group_by(team) %>%
+  mutate(
+    # Use previous season's win rate as expectation
+    prev_win_pct = lag(win_pct),
+    expected_wins = case_when(
+      is.na(prev_win_pct) ~ games * 0.5,  # League average for first season
+      TRUE ~ games * prev_win_pct
+    ),
+    wins_above_expected = actual_wins - expected_wins
+  ) %>%
+  ungroup()
+
+# Correlate schedule difficulty with performance vs expectations
+correlation <- cor(expected_wins$schedule_difficulty_scaled, 
+                   expected_wins$wins_above_expected, 
+                   use = "complete.obs")
+cat("Correlation between schedule difficulty and wins above expected:", round(correlation, 3), "\n")
+
+# Show teams with the most wins gained/lost schedules
+easiest <- expected_wins %>%
+  group_by(team) %>%
+  summarise(avg_difficulty = mean(schedule_difficulty_scaled), .groups = "drop") %>%
+  arrange(desc(avg_difficulty))
+head(easiest)
+
+hardest <- expected_wins %>%
+  group_by(team) %>%
+  summarise(avg_difficulty = mean(schedule_difficulty_scaled), .groups = "drop") %>%
+  arrange(avg_difficulty)
+head(hardest)
+```
+
+The Cleveland Cavaliers gained 1.8 regular season wins due to schedule-related factors from 2019-20 though 2023-24 (+1.8 wins)     
+The Portland Trailblazers lost 1.6 regular season wins due to schedule-related factors from 2019-20 though 2023-24 (-1.6 wins)     
+
+
+
+
+
+
+
