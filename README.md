@@ -9,6 +9,3 @@ Interactive analysis of travel burden, rest patterns, and competitive balance in
 
 ## Technologies Used
 R • tidyverse • ggplot2 • plotly • statistical modeling
-
-## Live Demo
-[Interactive Schedule Visualizations](link-to-github-pages)
