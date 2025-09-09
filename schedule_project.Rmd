@@ -781,6 +781,32 @@ den_interactive_final
 
 ```
 
+## OKC Thunder 2024-25 Schedule Analysis Brief
+### To: Coaching Staff & Front Office
+
+### Schedule Overview
+
+Based on my visualization tool, OKC's 2024-25 draft schedule presents 26 4-in-6 stretches and 16 back-to-back periods across the 80-game sample. This places the team slightly above the league average of 25.1 4-in-6 stretches over the last 10 seasons.
+
+### Most Challenging Periods
+
+Worst Period: The most concerning stretch appears to be late February to the middle of March, featuring multiple 4-in-6 sequence that coincide with 3 back-to-back games. This period will require careful load management and rotation planning.
+
+High Travel Concerns: Cross-country travel peaks around this time as well, with one stand-out trip exceeding 1400 miles between that game and the previous one. These travel burdens will compound on top of the already dense scheduling period.
+
+### Strategic Advantages
+
+Best Recovery Windows: The schedule provides natural breathing room during the All-Star Break in February, offering an opportunity for much-needed rest.
+
+Home Stand Benefits: An extended home period in late March heading into April will be crucial for building momentum and integrating team systems without travel fatigue.
+
+### Recommendations
+
+Load Management Strategy: Prioritize veteran rest during 4-in-6 periods
+
+Practice Planning: Use low-travel windows for intensive skill development or depth chart retooling
+
+Roster Depth: Ensure bench readiness for back-to-back periods
 
 ## Part 3 -- Modeling     
 
